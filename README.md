@@ -2,9 +2,17 @@
 
 **Closed-loop Organoid Intelligence system for visual categorical learning.**
 
-A biologically grounded simulation framework implementing STDP-based learning in a synthetic brain organoid for visual category discrimination. Designed as a computational bridge toward real MEA hardware integration (CL1, HD-MEA).
+A biologically grounded simulation framework implementing STDP-based learning in a synthetic brain organoid for visual category discrimination. Designed as a computational bridge toward real MEA hardware integration.
 
-Companion project to [organoid v6.3](https://github.com/metin/organoid-v63) — the electrophysiology analysis pipeline.
+Companion project to [Axon](https://github.com/Metin1558/axon) — the organoid MEA electrophysiology analysis pipeline.
+
+**Current version:** v3.1 (July 2026) · **Tests:** 47/47 passing
+
+> **v3.0 correction.** v3.0 was published claiming 47/47. Two of those tests were
+> later found to be measuring the wrong quantity and, on re-audit, v3.0 should be
+> read as **45/47**. Both tests were rewritten in v3.1. No framework code was
+> changed — the defects were in the tests, not the mechanism.
+> See [CHANGELOG_v3.1.md](CHANGELOG_v3.1.md) for the full account.
 
 ---
 
@@ -43,7 +51,7 @@ analysis/
 └── oi_metrics.py  Learning metrics (accuracy, STTC, weight divergence)
 
 tests/
-└── test_oi_v3.py  47 synthetic validation tests (100% pass)
+└── test_oi_v3.py  47 validation tests across 6 suites
 ```
 
 ---
@@ -67,13 +75,20 @@ Every mechanism in this system has a biological counterpart:
 
 Neuromodulator scales magnitude — spike timing still drives direction. Reward/penalty delivered as actual current to LIF neurons (Phase 2), which shapes post-synaptic timing naturally via STDP, without any external override.
 
+Verified by paired control: under the default configuration, disabling STDP
+(`learning_rate=0.0`) reduces the weight change to exactly `0.0` on all seeds
+tested, while the enabled arm produces non-zero change. The contribution is
+attributable to STDP and not to homeostatic rescaling.
+
 ### Rank-Order Coding (Van Rullen & Thorpe 2001)
 
 Most salient pixel fires first (latency ≈ 0 ms), least salient fires last. Since STDP is exponentially sensitive to spike timing, the most prominent visual features drive learning most strongly — consistent with biological retinal processing.
 
 ### Frozen-weight validation
 
-`freeze_weights_test()` freezes organoid weights and measures accuracy with the current decoder. If performance drops to chance (~33% for 3 categories), STDP is confirmed as the learning source — not the decoder.
+`freeze_weights_test()` freezes organoid weights and measures accuracy with the current decoder. Performance dropping to chance (~33% for 3 categories) is evidence that learning is not carried by the decoder alone.
+
+Note that this control **does not transfer to live tissue** — biological synapses cannot be frozen. A closed-loop hardware experiment needs a different control for the same claim (for example, a reward-decoupled or no-injection arm run interleaved within the same session).
 
 ---
 
@@ -84,6 +99,9 @@ pip install numpy scipy Pillow
 ```
 
 Python 3.10+ required. No GPU needed.
+
+`scipy` is used for DoG convolution and `Pillow` for image loading; both are
+imported lazily, so the test suite itself runs on `numpy` alone.
 
 ---
 
@@ -107,25 +125,43 @@ python oi_cli.py run --trials 500 --neurons 150 --lr 0.005 --quiet
 
 ## Validation
 
-47 synthetic tests across 6 modules — 100% pass rate:
+47 tests across 6 suites — all passing as of v3.1. Runtime ~2 s, deterministic.
 
-| Module | Tests | What is tested |
-|--------|-------|----------------|
-| oi_signal (DoG + rank-order) | 16 | DoG channels, latency ordering, pattern separation |
-| oi_stdp (Three-Factor, vectorized) | 12 | LTP/LTD direction, neuromodulator scaling, speed |
-| oi_reward (current injection) | 15 | Reward/penalty currents, LIF response, neuromod factors |
-| oi_synth (LIF organoid) | — | Inherited from sim module |
-| oi_loop (full pipeline) | 10 | Hebbian decoder, blanking, epoch homeostatic |
-| Freeze-weights test | 4 | Validates STDP as learning source |
+| Suite | Tests | What is tested |
+|-------|-------|----------------|
+| T1 — Vectorized STDP | 12 | LTP/LTD direction, neuromodulator scaling, vectorization correctness and speed |
+| T2 — Epoch-based homeostatic | 5 | Epoch boundary triggering, trial counting, STDP survival under rescaling |
+| T3 — Blanking period | 7 | Stimulus-artifact suppression, spike retention outside the blank window |
+| T4 — Hebbian decoder | 9 | Initialization, decoding, local update direction, decay-bounded weights |
+| T5 — Full closed-loop | 10 | End-to-end trial, reward delivery, history, accuracy bookkeeping |
+| T6 — Freeze-weights | 4 | Decoder-only performance falls to chance; state preserved |
+
+Two assertions were rewritten in v3.1:
+
+- **T2 washout** — v3.0 used an absolute threshold on an 8-electrode / 5-neuron configuration in which the LIF population emits zero spikes, so STDP contributed exactly nothing and the test was measuring homeostatic drift. Replaced with a paired STDP-on / STDP-off control.
+- **T4 decay bound** — v3.0 asserted `max|w| < 50` under a drive whose analytical equilibrium is `lr·rate/decay = 10000`, a bound unreachable by construction. Replaced with a convergence check against the predicted equilibrium.
+
+Passing a test and the underlying claim being true are separate things. Both rewrites were calibrated against measured values rather than chosen to make the suite green; the measurements and thresholds are recorded in the changelog and inline in the test file.
 
 ---
 
 ## Limitations
 
-- **Synthetic organoid only.** Real hardware requires CL1 or HD-MEA with real-time readout API. `SyntheticOrganoid` implements the interface that real hardware would replace.
+- **Synthetic organoid only.** Real hardware requires a platform with a real-time readout API. `SyntheticOrganoid` implements the three-method interface (`stimulate`, `read_spikes`, `inject_current`) that real hardware would replace; no other module needs modification.
+
+- **Electrode count mismatch with target hardware.** Under default LIF parameters the population is *completely silent* below 64 electrodes — 0 spikes in 8/8 trials at 8, 16 and 32 electrodes. Target MEA platforms commonly provide 32. Either the LIF parameters or the input encoding must be revisited before hardware integration. Unresolved.
+
+- **Empty trials.** Under the default 64-electrode configuration, 4–7 trials in 20 produce zero organoid spikes. A trial with no spikes gives the decoder nothing to read. A minimum-spike criterion for trial validity should be fixed *before* any live-tissue experiment, otherwise reported accuracy tracks firing rate rather than learning.
+
+- **Firing-rate regime.** The simulation runs at ~0.7–0.9 Hz per neuron, broadly comparable to published human organoid medians (~0.42 Hz). It has not been validated at the low end of the observed range, where a 0.5 s readout window yields on the order of one spike per trial.
+
 - **Ragged array outer loop.** Spike trains have variable length — the outer loop over neuron pairs is unavoidable without padding. For networks > 500 neurons, consider fixed-length spike matrices.
+
 - **Hebbian decoder separability.** Local Hebbian learning may not separate linearly non-separable categories. For complex stimuli, a larger neuron count improves population coverage.
-- **No long-term stability guarantee.** Epoch-based homeostatic (every 10 trials) prevents acute collapse but does not guarantee stability over thousands of trials.
+
+- **No long-term stability guarantee.** Epoch-based homeostatic scaling (every 10 trials) prevents acute collapse but does not guarantee stability over thousands of trials.
+
+- **Not peer reviewed.**
 
 ---
 
@@ -142,4 +178,4 @@ python oi_cli.py run --trials 500 --neurons 150 --lr 0.005 --quiet
 
 ---
 
-*Companion to organoid v6.3. Not peer reviewed. May 2026.*
+*Companion to Axon v6.3. Not peer reviewed. v3.1 — July 2026.*
