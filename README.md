@@ -1,36 +1,49 @@
 # organoid-oi
 
-**Closed-loop Organoid Intelligence system for visual categorical learning.**
+**Closed-loop Organoid Intelligence system for categorical learning.**
 
-A biologically grounded simulation framework implementing STDP-based learning in a synthetic brain organoid for visual category discrimination. Designed as a computational bridge toward real MEA hardware integration.
+A biologically grounded simulation framework implementing STDP-based learning in a synthetic brain organoid for categorical discrimination. Designed as a computational bridge toward real MEA hardware integration.
 
 Companion project to [Axon](https://github.com/Metin1558/axon) — the organoid MEA electrophysiology analysis pipeline.
 
-**Current version:** v3.1 (July 2026) · **Tests:** 47/47 passing
+**Current version:** v3.2 (July 2026) · **Tests:** 47/47 passing · **Task:** anagram (Morse-coded sequences)
 
-> **v3.0 correction.** v3.0 was published claiming 47/47. Two of those tests were
-> later found to be measuring the wrong quantity and, on re-audit, v3.0 should be
-> read as **45/47**. Both tests were rewritten in v3.1. No framework code was
-> changed — the defects were in the tests, not the mechanism.
-> See [CHANGELOG_v3.1.md](CHANGELOG_v3.1.md) for the full account.
+> **v3.0 → v3.1 — test suite correction.** v3.0 was published claiming 47/47. Two
+> of those tests were later found to be measuring the wrong quantity and, on
+> re-audit, v3.0 should be read as **45/47**. Both tests were rewritten in v3.1.
+> No framework code was changed — the defects were in the tests, not the
+> mechanism. See [CHANGELOG_v3.1.md](CHANGELOG_v3.1.md).
+
+> **v3.1 → v3.2 — task validity correction.** The three-category task used in
+> every result up to v3.1 ("banana / apple / pear") turns out to be solvable by
+> an **untrained** organoid at **100% accuracy** — the categories differ in raw
+> spike count from the moment the network is instantiated, before any learning
+> occurs. There was nothing for a learning rule to improve. The task has been
+> replaced with a Morse-coded anagram task (`art` / `rat` / `tar`) on which an
+> untrained organoid performs at **35.7%**, next to a chance level of 33.3%. The
+> old task is kept as a control. See [CHANGELOG_v3.2.md](CHANGELOG_v3.2.md) and
+> `BULGULAR.md` for the full account.
 
 ---
 
 ## Overview
 
-The system presents visual stimuli to a simulated organoid via electrode activation patterns, reads the neural response, delivers biologically realistic reward/penalty signals as current injection, and updates synaptic weights via Three-Factor STDP. A local Hebbian readout layer decodes the organoid's population activity.
+The system presents a stimulus to a simulated organoid via electrode activation patterns, reads the neural response, delivers biologically realistic reward/penalty signals as current injection, and updates synaptic weights via Three-Factor STDP. A local Hebbian readout layer decodes the organoid's population activity.
 
 ```
-Image → DoG filter → Rank-order spikes → Organoid (LIF neurons)
-                                               ↓
-                                         Decode response
-                                               ↓
-                              Reward (10 Hz theta) or Penalty (200 Hz noise)
-                                               ↓
-                                    Current injection → Phase 2
-                                               ↓
-                              Three-Factor STDP + Homeostatic scaling
+Stimulus → encoding → Organoid (LIF neurons)
+                            ↓
+                      Decode response
+                            ↓
+           Reward (10 Hz theta) or Penalty (200 Hz noise)
+                            ↓
+                 Current injection → Phase 2
+                            ↓
+           Three-Factor STDP + Homeostatic scaling
 ```
+
+The task is now a configurable choice, not a fixed property of the encoder — see
+[Task validity](#task-validity-from-fruit-to-anagrams) below.
 
 ---
 
@@ -40,6 +53,7 @@ Image → DoG filter → Rank-order spikes → Organoid (LIF neurons)
 core/
 ├── oi_types.py    Shared dataclasses (StimulusPattern, OrganoidResponse, ...)
 ├── oi_signal.py   Image → spike pattern (DoG filter, rank-order latency coding)
+├── oi_gorev.py    Task definitions: "meyve" (fruit, control) and "anagram" (primary)
 ├── oi_stdp.py     Three-Factor STDP (Bi & Poo 1998, vectorized)
 ├── oi_reward.py   Reward/penalty as current injection (not external weight forcing)
 └── oi_loop.py     Closed-loop orchestrator + Hebbian decoder + blanking period
@@ -51,7 +65,7 @@ analysis/
 └── oi_metrics.py  Learning metrics (accuracy, STTC, weight divergence)
 
 tests/
-└── test_oi_v3.py  47 validation tests across 6 suites
+└── test_oi_v3.py  47 validation tests across 6 suites — mechanism-level, not task-level
 
 monitor/
 ├── oi_monitor.py  Live panel server (standard library only)
@@ -60,11 +74,21 @@ monitor/
 
 sondalar/          Research probes — none of these touch core/ or sim/
 ├── d_teshis.py             Health check
+├── kalibrasyon.py          Calibrates the monitor against known ground truth
+├── gorev_testi.py          Measures untrained baseline accuracy per task
+├── arama.py                Systematic search over connectivity + temporal coding
+├── okuma_testi.py          Tests whether the readout layer is the bottleneck
 ├── tarama_32elektrot.py    Excitability sweep
-├── sonda_seyrek.py         Sparse connectivity probe
-└── sonda_recurrent.py      Recurrent connectivity probe
+├── sonda_seyrek.py         Sparse connectivity probe (superseded by arama.py)
+└── sonda_recurrent.py      Recurrent connectivity probe (superseded by arama.py)
 
-makale/            Preprint (v2.0), editable source, Zenodo metadata
+sonuclar/          Generated by the scripts above (timestamped .txt + .json).
+                   Not checked in; add to .gitignore.
+
+makale/            Preprint, editable source, Zenodo metadata
+
+oi_cli.py                Command-line interface
+oi_run_monitored.py      Two-arm live session with the attribution panel
 ```
 
 ---
@@ -90,29 +114,42 @@ Neuromodulator scales magnitude — spike timing still drives direction. Reward/
 
 Verified by paired control: under the default configuration, disabling STDP
 (`learning_rate=0.0`) reduces the weight change to exactly `0.0` on all seeds
-tested, while the enabled arm produces non-zero change. The contribution is
-attributable to STDP and not to homeostatic rescaling.
+tested, while the enabled arm produces non-zero change. **This shows the
+mechanism is wired correctly — that STDP changes weights.** It does not by
+itself show that those weight changes improve task performance; see
+[Task validity](#task-validity-from-fruit-to-anagrams), where paired control on
+*accuracy* (rather than on raw weight change) found no effect under the
+original task.
 
 ### Rank-Order Coding (Van Rullen & Thorpe 2001)
 
-Most salient pixel fires first (latency ≈ 0 ms), least salient fires last. Since STDP is exponentially sensitive to spike timing, the most prominent visual features drive learning most strongly — consistent with biological retinal processing.
+Most salient pixel fires first (latency ≈ 0 ms), least salient fires last. Since STDP is exponentially sensitive to spike timing, the most prominent visual features drive learning most strongly — consistent with biological retinal processing. Used by the fruit (control) task; the anagram task uses direct Morse-style temporal encoding instead (see below).
 
-### Frozen-weight validation
+### Frozen-weight validation — does not perform attribution
 
-`freeze_weights_test()` freezes organoid weights and measures accuracy with the current decoder. Performance dropping to chance (~33% for 3 categories) is evidence that learning is not carried by the decoder alone.
+`freeze_weights_test()` freezes organoid weights and re-runs the task with the
+decoder held fixed as well, then checks whether accuracy falls to chance.
 
-Note that this control **does not transfer to live tissue** — biological synapses cannot be frozen. A closed-loop hardware experiment needs a different control for the same claim (for example, a reward-decoupled or no-injection arm run interleaved within the same session).
+**This does not isolate the organoid's contribution.** Holding the decoder
+fixed alongside the organoid means the test cannot tell whether a chance-level
+result reflects "the organoid wasn't the source of the earlier accuracy" or
+simply "nothing was updating in either component." It was described in v1.0 as
+the framework's methodological core; the self-audit found it cannot do that
+job, in simulation or otherwise. It is also inapplicable to living tissue,
+since biological synapses cannot be frozen. The two-arm attribution monitor
+below (and the offline classifier in `okuma_testi.py`) are used in its place.
 
 ---
 
 ## Attribution monitor
 
 `monitor/` contains a live panel that runs alongside an experiment. It exists
-because of the finding documented in `BULGULAR.md`: a closed-loop system with an
-adaptive readout layer will show rising accuracy whenever the substrate's
-responses are separable **for any reason at all**, including reasons that have
-nothing to do with learning. Above-chance performance on its own is not evidence
-of substrate learning.
+because of a general failure mode documented in `BULGULAR.md`: a closed-loop
+system with an adaptive readout layer will show rising or above-chance accuracy
+whenever the substrate's responses are separable **for any reason at all**,
+including reasons that have nothing to do with learning — as turned out to be
+exactly the case for the original fruit task. Above-chance performance on its
+own is not evidence of substrate learning.
 
 The panel is therefore structurally two-armed. Two arms run under one readout
 layer, differing only in whether plasticity is switched on, interleaved within a
@@ -127,7 +164,8 @@ doing, and the readout layer tracks either. Both signals must agree before the
 result is treated as attributable.
 
 ```bash
-python oi_run_monitored.py          # live, opens a browser
+python oi_run_monitored.py                    # anagram task, live, opens a browser
+python oi_run_monitored.py --gorev meyve      # fruit task (control)
 ```
 
 `monitor/panel.html` opens directly in a browser with no server and no Python.
@@ -137,6 +175,134 @@ point.
 
 When the synthetic organoid is replaced by hardware, only `sim/oi_synth.py` and
 the loop in `oi_run_monitored.py` change. The panel is source-agnostic.
+
+### Calibrating the monitor
+
+Before trusting the panel against live tissue, it was calibrated against two
+sessions with a **known** ground truth (`sondalar/kalibrasyon.py`): a synthetic
+organoid whose category responses are hard-coded to sharpen over trials
+(`--pozitif`), and one whose responses never change (`--negatif`). The panel
+must separate the two arms in the first case and must not in the second.
+
+```bash
+python sondalar/kalibrasyon.py --pozitif   # measured: +85.0 pt gap, separability net +1.40 → panel saw it
+python sondalar/kalibrasyon.py --negatif   # measured: +0.0 pt gap, separability net +0.00 → no false alarm
+```
+
+Both passed. This means the panel itself is not the bottleneck in the null
+results reported below — the instrument works; what it is measuring did not,
+under the original task.
+
+---
+
+## Task validity: from fruit to anagrams
+
+### The problem
+
+The three-category fruit task ("banana" / "apple" / "pear") used throughout
+v1.0–v3.1 was measured, via `sondalar/gorev_testi.py`, to be solvable by a
+**completely untrained** organoid:
+
+| Task | Untrained baseline accuracy | Chance |
+|---|---|---|
+| fruit (`meyve`) | **100.0%** (std 0.0, n=10 seeds) | 33.3% |
+| anagram | **35.7%** (std 5.2, n=10 seeds) | 33.3% |
+
+The three fruit categories produce different raw spike counts (roughly 0, 35,
+and 100 active units out of a population) purely as a byproduct of random
+initial connectivity — before a single trial of training. A paired control
+(STDP enabled vs. disabled, identical seed and stimuli) on the fruit task
+therefore shows **exactly zero** accuracy difference under every configuration
+tested: two encoding schemes, four connectivity densities, five excitability
+regimes, and learning rates spanning a 500-fold range. There is nothing for a
+learning rule to improve, so it does not — the framework's earlier reported
+learning was entirely the readout layer's own adaptation to a fixed
+separability.
+
+### The replacement task
+
+`core/oi_gorev.py` defines an anagram task: three Morse-coded sequences built
+from the **same three symbols in different order**, so raw activity carries no
+category information and only timing-sensitive plasticity has anything to
+work with:
+
+```
+art   . - . - . -
+rat   . - . . - -
+tar   - . - . - .
+```
+
+Each sequence has 6 symbols, 3 dots, 3 dashes — identical total drive. An
+untrained organoid cannot solve this by counting spikes; a category can only be
+read from *when* they arrive.
+
+The drive was tuned down from a first pass at 48.7 Hz/neuron (100% of
+electrodes carrying signal) to 8.5 Hz/neuron (25% of electrodes, selected
+independently of category — no identity leakage), both to stay closer to
+published organoid firing rates (~0.4–2 Hz) and because the STDP computation
+scales with spike count, making the search roughly 6× faster. Untrained
+baseline at this setting is 42.2% (n=10 seeds) — still comfortably below the
+pre-registered 45% validity threshold.
+
+The fruit task is kept in the codebase as a **control**: any future positive
+result on the anagram task should be checked against a flat/null result on
+fruit under the same architecture, as one more line of evidence that a positive
+result is task-specific rather than an artifact of the search.
+
+### What has been searched so far
+
+`sondalar/arama.py` runs a paired-control sweep (STDP on vs. off, identical
+seed) over two candidate mechanisms, using **separability** — not accuracy — as
+the primary outcome, because the readout layer's own adaptation can mask the
+substrate's contribution to accuracy:
+
+- **Recurrent connectivity** (`g_rec`, `p_rec`) — the organoid is purely
+  feedforward by default (electrode → neuron, no neuron-to-neuron connections);
+  sparse, excitatory/inhibitory-balanced recurrent connections were added as a
+  candidate.
+- **Temporal repetition** (`tekrar`) — repeating the same stimulus pattern
+  several times within the trial window, giving STDP a repeated timing
+  structure to act on rather than a single transient.
+
+Pre-registered decision thresholds (fixed before running, not adjusted
+afterward): separability net contribution ≥ +0.50, sign-consistent in ≥75% of
+seeds, and an accuracy difference ≥ +8.0 points.
+
+A fast pilot sweep (2 seeds) flagged two candidates that did not replicate at
+n=10–25 seeds — one fell from a nominal +3.14 to −0.18 (50% sign consistency),
+a reminder that low-seed-count screening produces false positives. One
+configuration did replicate in direction: `g_rec=1.0, p_rec=0.20, tekrar=6`
+gave a separability net contribution of **+1.45 to +1.67** across n=10 and
+n=25 seeds, sign-consistent in 80% of seeds — but the accuracy criterion was
+not met (+1.6 to +6.2 points, threshold +8.0), so it is **not** reported as a
+positive finding.
+
+`sondalar/okuma_testi.py` then tested whether the online Hebbian decoder was
+the bottleneck on that same configuration, by re-solving the organoid's
+recorded responses offline with a strong, non-adaptive classifier (5-fold
+cross-validated nearest-centroid). If the online decoder were the limiting
+factor, the offline classifier should recover a real separability difference
+that the online accuracy missed. **It did not** — offline accuracy difference
++0.56 points, sign-consistent in only 40% of seeds. The apparent separability
+signal from `arama.py` does not correspond to decodable category information;
+the decoder is not the bottleneck, and the earlier near-miss is best read as
+noise concentrated in a small number of seeds rather than a real, sub-threshold
+effect.
+
+**Net status:** no configuration has yet produced a validated positive result
+on the anagram task under the pre-registered criteria. Recurrent connectivity
+remains the only mechanism that has moved the sign of the effect at all and is
+the most promising direction to search further, at a wider range of `g_rec` /
+`p_rec` and with more seeds. This search has not yet been re-run with the
+tuned-down (8.5 Hz/neuron) drive used for the validity measurement above — the
+sweep above used an earlier, more heavily driven version of the task.
+
+```bash
+python sondalar/gorev_testi.py                                    # untrained baseline, both tasks
+python sondalar/arama.py --tara                                   # full sweep (~1h)
+python sondalar/arama.py --dogrula --g 1.0 --p 0.20 --tekrar 6     # confirm a specific candidate
+python sondalar/okuma_testi.py --g 1.0 --p 0.20 --tekrar 6         # is the decoder the bottleneck?
+```
 
 ---
 
@@ -149,31 +315,33 @@ pip install numpy scipy Pillow
 Python 3.10+ required. No GPU needed.
 
 `scipy` is used for DoG convolution and `Pillow` for image loading; both are
-imported lazily, so the test suite itself runs on `numpy` alone.
+imported lazily, so the test suite and the anagram task run on `numpy` alone.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Run validation tests
+# Run validation tests (mechanism-level; independent of task choice)
 python oi_cli.py test
 
-# 50-trial demo
-python oi_cli.py demo
-
-# Full 300-trial experiment
-python oi_cli.py run --trials 300
-
-# Custom
-python oi_cli.py run --trials 500 --neurons 150 --lr 0.005 --quiet
-
-# Two-arm session with the live attribution panel (opens a browser)
+# Two-arm live session with the attribution panel (anagram task, default)
 python oi_run_monitored.py
-python oi_run_monitored.py --trials 300 --delay 0.3
+python oi_run_monitored.py --gorev meyve --trials 300
 
 # Health check
 python sondalar/d_teshis.py
+
+# Calibrate the monitor against known ground truth
+python sondalar/kalibrasyon.py --pozitif
+python sondalar/kalibrasyon.py --negatif
+
+# Measure untrained baseline accuracy for each task
+python sondalar/gorev_testi.py
+
+# Search for a configuration where STDP affects the anagram task
+python sondalar/arama.py --tara --hizli      # ~10 min pilot
+python sondalar/arama.py --tara              # ~1 h full sweep
 ```
 
 For a self-contained demonstration with no Python and no network, open
@@ -184,6 +352,11 @@ For a self-contained demonstration with no Python and no network, open
 ## Validation
 
 47 tests across 6 suites — all passing as of v3.1. Runtime ~2 s, deterministic.
+These tests validate that each **mechanism** behaves as specified (STDP
+direction, decoder update rule, blanking, homeostatic timing). They do not and
+cannot validate that a given **task** is learnable by the framework — that is
+a property of the task and architecture together, and is what the search
+described above is for.
 
 | Suite | Tests | What is tested |
 |-------|-------|----------------|
@@ -192,14 +365,14 @@ For a self-contained demonstration with no Python and no network, open
 | T3 — Blanking period | 7 | Stimulus-artifact suppression, spike retention outside the blank window |
 | T4 — Hebbian decoder | 9 | Initialization, decoding, local update direction, decay-bounded weights |
 | T5 — Full closed-loop | 10 | End-to-end trial, reward delivery, history, accuracy bookkeeping |
-| T6 — Freeze-weights | 4 | Decoder-only performance falls to chance; state preserved |
+| T6 — Freeze-weights | 4 | Returns a float in range; state preserved (does **not** test attribution — see above) |
 
 Two assertions were rewritten in v3.1:
 
 - **T2 washout** — v3.0 used an absolute threshold on an 8-electrode / 5-neuron configuration in which the LIF population emits zero spikes, so STDP contributed exactly nothing and the test was measuring homeostatic drift. Replaced with a paired STDP-on / STDP-off control.
 - **T4 decay bound** — v3.0 asserted `max|w| < 50` under a drive whose analytical equilibrium is `lr·rate/decay = 10000`, a bound unreachable by construction. Replaced with a convergence check against the predicted equilibrium.
 
-Passing a test and the underlying claim being true are separate things. Both rewrites were calibrated against measured values rather than chosen to make the suite green; the measurements and thresholds are recorded in the changelog and inline in the test file.
+Passing a test and the underlying claim being true are separate things. Both rewrites were calibrated against measured values rather than chosen to make the suite green; the measurements and thresholds are recorded in `CHANGELOG_v3.1.md` and inline in the test file. The same discipline applies to the task-validity work in v3.2: thresholds in `arama.py`, `okuma_testi.py`, and `gorev_testi.py` are fixed in the source before running and are not adjusted after seeing results.
 
 ---
 
@@ -207,11 +380,15 @@ Passing a test and the underlying claim being true are separate things. Both rew
 
 - **Synthetic organoid only.** Real hardware requires a platform with a real-time readout API. `SyntheticOrganoid` implements the three-method interface (`stimulate`, `read_spikes`, `inject_current`) that real hardware would replace; no other module needs modification.
 
-- **Electrode count mismatch with target hardware.** Under default LIF parameters the population is *completely silent* below 64 electrodes — 0 spikes in 8/8 trials at 8, 16 and 32 electrodes. Target MEA platforms commonly provide 32. Either the LIF parameters or the input encoding must be revisited before hardware integration. Unresolved.
+- **No configuration has passed the pre-registered criteria for STDP affecting the anagram task.** This is the current central open problem. See [Task validity](#task-validity-from-fruit-to-anagrams).
 
-- **Empty trials.** Under the default 64-electrode configuration, 4–7 trials in 20 produce zero organoid spikes. A trial with no spikes gives the decoder nothing to read. A minimum-spike criterion for trial validity should be fixed *before* any live-tissue experiment, otherwise reported accuracy tracks firing rate rather than learning.
+- **The recurrent-connectivity search predates the tuned-down anagram drive.** The most promising configuration found (`g_rec=1.0, p_rec=0.20, tekrar=6`) was swept under an earlier, more heavily driven version of the task; it has not been re-tested at the 8.5 Hz/neuron setting now used for validity measurement.
 
-- **Firing-rate regime.** The simulation runs at ~0.7–0.9 Hz per neuron, broadly comparable to published human organoid medians (~0.42 Hz). It has not been validated at the low end of the observed range, where a 0.5 s readout window yields on the order of one spike per trial.
+- **Electrode count mismatch with target hardware.** Under default LIF parameters and the fruit task's encoding, the population was found to be *completely silent* below 64 electrodes. Target MEA platforms commonly provide 32. This was a motivating factor in reconsidering the encoding; whether it recurs under the anagram task's electrode-subsampled Morse encoding at 32 electrodes has not been separately checked.
+
+- **Empty trials.** A trial with no organoid spikes gives the decoder nothing to read. A minimum-spike criterion for trial validity should be fixed *before* any live-tissue experiment, otherwise reported accuracy tracks firing rate rather than learning.
+
+- **Firing-rate regime.** Anagram-task drive (8.5 Hz/neuron at default settings) is above published human organoid medians (~0.4–2 Hz) though closer than the original 48.7 Hz/neuron pass. Not yet validated at the low end of the observed range.
 
 - **Ragged array outer loop.** Spike trains have variable length — the outer loop over neuron pairs is unavoidable without padding. For networks > 500 neurons, consider fixed-length spike matrices.
 
@@ -236,4 +413,4 @@ Passing a test and the underlying claim being true are separate things. Both rew
 
 ---
 
-*Companion to Axon v6.3. Not peer reviewed. v3.1 — July 2026.*
+*Companion to Axon v6.3. Not peer reviewed. v3.2 — July 2026.*
