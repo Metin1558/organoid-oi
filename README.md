@@ -52,6 +52,19 @@ analysis/
 
 tests/
 └── test_oi_v3.py  47 validation tests across 6 suites
+
+monitor/
+├── oi_monitor.py  Live panel server (standard library only)
+├── oi_panel.html  Two-arm attribution panel, fed by a running experiment
+└── panel.html     Offline demo of the same panel (no server, no Python)
+
+sondalar/          Research probes — none of these touch core/ or sim/
+├── d_teshis.py             Health check
+├── tarama_32elektrot.py    Excitability sweep
+├── sonda_seyrek.py         Sparse connectivity probe
+└── sonda_recurrent.py      Recurrent connectivity probe
+
+makale/            Preprint (v2.0), editable source, Zenodo metadata
 ```
 
 ---
@@ -92,6 +105,41 @@ Note that this control **does not transfer to live tissue** — biological synap
 
 ---
 
+## Attribution monitor
+
+`monitor/` contains a live panel that runs alongside an experiment. It exists
+because of the finding documented in `BULGULAR.md`: a closed-loop system with an
+adaptive readout layer will show rising accuracy whenever the substrate's
+responses are separable **for any reason at all**, including reasons that have
+nothing to do with learning. Above-chance performance on its own is not evidence
+of substrate learning.
+
+The panel is therefore structurally two-armed. Two arms run under one readout
+layer, differing only in whether plasticity is switched on, interleaved within a
+single session so that tissue drift reaches both equally:
+
+- **traces together** → the readout layer is producing the performance on its own
+- **traces separated** → the substrate is contributing
+
+A decoder-independent separability measure runs alongside, because accuracy
+reflects how *separable* the responses are rather than what the substrate is
+doing, and the readout layer tracks either. Both signals must agree before the
+result is treated as attributable.
+
+```bash
+python oi_run_monitored.py          # live, opens a browser
+```
+
+`monitor/panel.html` opens directly in a browser with no server and no Python.
+It carries a switch that hides the control arm, showing what a conventional
+single-panel dashboard would display for the same session — which is the whole
+point.
+
+When the synthetic organoid is replaced by hardware, only `sim/oi_synth.py` and
+the loop in `oi_run_monitored.py` change. The panel is source-agnostic.
+
+---
+
 ## Installation
 
 ```bash
@@ -119,7 +167,17 @@ python oi_cli.py run --trials 300
 
 # Custom
 python oi_cli.py run --trials 500 --neurons 150 --lr 0.005 --quiet
+
+# Two-arm session with the live attribution panel (opens a browser)
+python oi_run_monitored.py
+python oi_run_monitored.py --trials 300 --delay 0.3
+
+# Health check
+python sondalar/d_teshis.py
 ```
+
+For a self-contained demonstration with no Python and no network, open
+`monitor/panel.html` directly in a browser.
 
 ---
 
