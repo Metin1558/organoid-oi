@@ -154,7 +154,7 @@ def gorev_uyaran(gorev, etiket, cfg, rng, indeks=0, tekrar=1, **kw):
     tekrar  : meyve gorevinde zamana yayma katsayisi
     """
     if gorev == "anagram":
-        return mors_uyaran(etiket, cfg, rng, **kw)
+        return zamana_yay(mors_uyaran(etiket, cfg, rng, **kw), tekrar, cfg)
     if gorev == "meyve":
         return zamana_yay(
             synthetic_stimulus(etiket, DESEN[indeks % 3], cfg, rng), tekrar, cfg)
