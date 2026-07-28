@@ -82,9 +82,10 @@ class TekrarlayanOrganoid(SyntheticOrganoid):
         super().__init__(config, rng=rng)
         n = self.n_neurons
         self.g_rec = g_rec
-        if g_rec <= 0:
-            self.W_rec = None
-            return
+        # NOT: g_rec=0 olsa bile vektorize yol kullanilir. Aksi halde g=0
+        # satiri farkli bir integratorden gecer ve "tekrarlayan baglanti
+        # ise yariyor mu" karsilastirmasi kod yolu degisikligiyle karisir.
+        # W_rec sifir matris oldugunda tekrarlayan akim tam olarak sifirdir.
         inh = self.rng.random(n) < frac_inh
         maske = self.rng.random((n, n)) < p_rec
         np.fill_diagonal(maske, False)
@@ -131,8 +132,6 @@ class TekrarlayanOrganoid(SyntheticOrganoid):
         return [np.array(x) for x in atesler]
 
     def respond(self, stimulus, timestamp, post_stimulus_current=None, dt_ms=1.0):
-        if self.W_rec is None:
-            return super().respond(stimulus, timestamp, post_stimulus_current, dt_ms)
         dt_s = dt_ms / 1000.0
         t1 = np.arange(int(stimulus.duration_s / dt_s)) * dt_s
         I1 = self._surus(stimulus, t1)
