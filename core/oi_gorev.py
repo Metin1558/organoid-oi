@@ -173,3 +173,4 @@ def gorev_config(gorev, **kw):
     elif gorev != "meyve":
         raise ValueError("bilinmeyen gorev: %r" % gorev)
     return ExperimentConfig(**kw)
+ 
