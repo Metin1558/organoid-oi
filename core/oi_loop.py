@@ -346,6 +346,7 @@ class ClosedLoopExperiment:
             reward=reward,
             correct=correct,
             timestamp=t,
+            response_p1=response_blanked,
         )
         self.trial_history.append(trial)
 
