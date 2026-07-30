@@ -63,6 +63,11 @@ class Trial:
     reward: RewardSignal
     correct: bool
     timestamp: float
+    # Faz 1 yaniti — odul/ceza akimi ENJEKTE EDILMEDEN once.
+    # 'response' alani enjeksiyon SONRASI aktiviteyi icerir; odul dogru
+    # tahminde verildigi icin o sinyal kategoriyle iliskilidir ve
+    # cevrimdisi cozucuyu kirletir. Atif olcumleri bu alani kullanmalidir.
+    response_p1: OrganoidResponse = None
 
 
 @dataclass
