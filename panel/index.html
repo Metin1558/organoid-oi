@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>organoid — sentence writer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=JetBrains+Mono:wght@400;500&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0c0a08;
+    font-family: 'JetBrains Mono', monospace;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  #rig {
+    width: 900px;
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 40px 90px rgba(0,0,0,.6);
+  }
+  #stage {
+    display: block;
+    background: #F3EBDA;
+  }
+  #controls {
+    background: #16130f;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-top: 1px solid #2a251d;
+  }
+  #controls .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #5a5148;
+  }
+  #controls .dot.rec { background: #d94f4f; box-shadow: 0 0 8px rgba(217,79,79,.7); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  #controls .label { color: #a89f8f; font-size: 12px; letter-spacing: .06em; }
+  #controls .status { margin-left: auto; color: #6b6153; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div id="rig">
+  <canvas id="stage" width="900" height="640"></canvas>
+  <div id="controls">
+    <div class="dot" id="recDot"></div>
+    <div class="label" id="recLabel">recording will start automatically</div>
+    <div class="status" id="status">connecting…</div>
+  </div>
+</div>
+
+<script>
+const cv = document.getElementById('stage');
+const ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const TOP_H = 400;   // cream "writing" panel
+const BOT_H = H - TOP_H; // dark technical panel
+
+// ---------------- palette ----------------
+const CREAM   = '#F3EBDA';
+const CREAM2  = '#EAE0C9';
+const INK     = '#3B3226';
+const INK_DIM = '#8A7D68';
+const RULE    = 'rgba(59,50,38,0.12)';
+const DARK    = '#14120E';
+const DARK2   = '#1D1A15';
+const LIVE    = '#E9A23B';
+const OK      = '#7FA875';
+const BAD     = '#C56B5C';
+const TEXT_D  = '#C9BFAE';
+const TEXT_DM = '#6B6153';
+
+let state = { phase: 'idle', words: [], lengths: {}, curve: [], current_sentence: [], last_event: null, finished: false };
+let cursorBlink = true;
+setInterval(()=>{ cursorBlink = !cursorBlink; }, 500);
+
+function wrapCentered(text, font, y, color, maxW) {
+  ctx.font = font; ctx.fillStyle = color; ctx.textAlign = 'center';
+  ctx.fillText(text, W/2, y, maxW);
+}
+
+function draw() {
+  // ---- top: cream typewriter panel ----
+  ctx.fillStyle = CREAM; ctx.fillRect(0, 0, W, TOP_H);
+
+  // faint ruled lines, like paper
+  ctx.strokeStyle = RULE; ctx.lineWidth = 1;
+  for (let y = 90; y < TOP_H - 20; y += 34) {
+    ctx.beginPath(); ctx.moveTo(60, y); ctx.lineTo(W - 60, y); ctx.stroke();
+  }
+
+  wrapCentered('ORGANOID — SENTENCE WRITER', '600 12px JetBrains Mono', 40, INK_DIM);
+  ctx.strokeStyle = 'rgba(59,50,38,0.25)';
+  ctx.beginPath(); ctx.moveTo(W/2 - 90, 52); ctx.lineTo(W/2 + 90, 52); ctx.stroke();
+
+  const sentence = state.current_sentence && state.current_sentence.length
+    ? state.current_sentence.join(' ') + '.'
+    : '';
+  const phaseLabel = {
+    idle: 'waiting to begin…',
+    training: 'reading the organoid…',
+    complete: 'sentence complete',
+  }[state.phase] || '';
+
+  ctx.font = "44px 'Fraunces', serif";
+  ctx.fillStyle = INK;
+  ctx.textAlign = 'center';
+  const y = 175;
+  if (sentence) {
+    ctx.fillText(sentence + (cursorBlink && state.phase !== 'complete' ? ' |' : ''), W/2, y, W - 140);
+  } else {
+    ctx.fillStyle = INK_DIM;
+    ctx.font = "italic 28px 'Fraunces', serif";
+    ctx.fillText(cursorBlink ? '|' : '', W/2, y);
+  }
+
+  ctx.font = '13px JetBrains Mono'; ctx.fillStyle = INK_DIM;
+  ctx.fillText(phaseLabel, W/2, 220);
+
+  // word-length key, drawn as little raised bars — visual echo of the mechanism
+  const words = state.words || [];
+  if (words.length) {
+    const bw = 64, gap = 18;
+    const totalW = words.length * bw + (words.length - 1) * gap;
+    let x = W/2 - totalW/2;
+    const baseY = 340;
+    words.forEach(w => {
+      const len = (state.lengths && state.lengths[w]) || w.length;
+      const barH = Math.min(70, len * 11);
+      const isCurrent = state.last_event && state.last_event.word === w;
+      ctx.fillStyle = isCurrent ? LIVE : CREAM2;
+      ctx.strokeStyle = 'rgba(59,50,38,0.3)';
+      roundRect(x, baseY - barH, bw, barH, 6); ctx.fill(); ctx.stroke();
+      ctx.font = '11px JetBrains Mono'; ctx.fillStyle = INK;
+      ctx.textAlign = 'center';
+      ctx.fillText(w, x + bw/2, baseY + 18);
+      ctx.fillStyle = INK_DIM;
+      ctx.fillText(len + ' letters', x + bw/2, baseY + 32);
+      x += bw + gap;
+    });
+  }
+
+  // ---- bottom: dark technical panel ----
+  ctx.fillStyle = DARK; ctx.fillRect(0, TOP_H, W, BOT_H);
+  ctx.fillStyle = DARK2; ctx.fillRect(0, TOP_H, W, 34);
+  ctx.font = '600 11px JetBrains Mono'; ctx.fillStyle = TEXT_DM; ctx.textAlign = 'left';
+  ctx.fillText('TECHNICAL READOUT', 24, TOP_H + 22);
+
+  const le = state.last_event;
+  const rowY = TOP_H + 70;
+  ctx.font = '11px JetBrains Mono'; ctx.fillStyle = TEXT_DM;
+  ctx.fillText('LAST TRIAL', 24, rowY - 22);
+  ctx.font = '15px JetBrains Mono'; ctx.fillStyle = TEXT_D;
+  if (le) {
+    ctx.fillText('word: ' + le.word + '   label: ' + le.label, 24, rowY);
+    ctx.fillStyle = le.correct ? OK : BAD;
+    ctx.fillText(le.correct ? '✓ correct' : '✗ incorrect', 24, rowY + 24);
+    ctx.fillStyle = TEXT_DM; ctx.font = '11px JetBrains Mono';
+    ctx.fillText('step ' + le.step, 24, rowY + 44);
+  } else {
+    ctx.fillStyle = TEXT_DM; ctx.fillText('—', 24, rowY);
+  }
+
+  // accuracy curve
+  const cx0 = 340, cx1 = W - 40, cy0 = TOP_H + 46, cy1 = H - 30;
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  [0,0.25,0.5,0.75,1].forEach(f => {
+    const y = cy1 - f * (cy1 - cy0);
+    ctx.beginPath(); ctx.moveTo(cx0, y); ctx.lineTo(cx1, y); ctx.stroke();
+  });
+  ctx.font = '10px JetBrains Mono'; ctx.fillStyle = TEXT_DM; ctx.textAlign = 'right';
+  ctx.fillText('accuracy (windowed)', cx1, TOP_H + 30);
+
+  const curve = state.curve || [];
+  if (curve.length > 1) {
+    ctx.beginPath();
+    curve.forEach(([step, acc], i) => {
+      const x = cx0 + (step / (curve[curve.length-1][0])) * (cx1 - cx0);
+      const y = cy1 - acc * (cy1 - cy0);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.strokeStyle = LIVE; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+  }
+  // chance line at 50%
+  const chanceY = cy1 - 0.5 * (cy1 - cy0);
+  ctx.setLineDash([3,4]); ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath(); ctx.moveTo(cx0, chanceY); ctx.lineTo(cx1, chanceY); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.font = '10px JetBrains Mono'; ctx.fillStyle = TEXT_DM; ctx.textAlign = 'left';
+  ctx.fillText('chance', cx0 + 4, chanceY - 4);
+
+  requestAnimationFrame(draw);
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+draw();
+
+// ---------------- polling ----------------
+async function poll() {
+  try {
+    const r = await fetch('/api/state', { cache: 'no-store' });
+    state = await r.json();
+    document.getElementById('status').textContent =
+      state.phase === 'complete' ? 'complete' : (state.phase === 'training' ? 'training…' : 'idle');
+    if (state.finished) stopRecording();
+  } catch (e) {}
+  setTimeout(poll, 300);
+}
+poll();
+
+// ---------------- automatic video recording ----------------
+let recorder, chunks = [];
+function startRecording() {
+  const stream = cv.captureStream(15);
+  let mimeType = 'video/mp4';
+  if (!window.MediaRecorder || !MediaRecorder.isTypeSupported(mimeType)) {
+    mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+  }
+  recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 3_000_000 });
+  chunks = [];
+  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: mimeType });
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    a.download = `organoid_sentence_${stamp}.${ext}`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    document.getElementById('recDot').classList.remove('rec');
+    document.getElementById('recLabel').textContent = `saved: ${a.download} (check your browser's download folder)`;
+  };
+  recorder.start(500);
+  document.getElementById('recDot').classList.add('rec');
+  document.getElementById('recLabel').textContent = 'recording — will auto-save when the run completes';
+}
+function stopRecording() {
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+}
+window.addEventListener('load', () => setTimeout(startRecording, 600));
+</script>
+</body>
+</html>
